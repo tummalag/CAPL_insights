@@ -1,0 +1,57 @@
+/*@!Encoding:1252*/
+/* ****************************************************************************
+* 
+* The following script allows to set a customized log file name and logfile path
+* 
+* Inputs are given as the system variables from the panel
+* INPUTS:
+*   sysvarString::LogFolderPath
+*   sysvarString::FileName
+* In-built FUNCTIONS:
+*   sysGetVariableString
+*******************************************************************************/
+
+/******************************************************************************/
+/*                                  GLOBALS                                   */
+/******************************************************************************/
+variables
+{
+  
+  /* filePath to save the sysvar FileName */
+  char logFilePath[256];
+ 
+  /* fileName to save the sysvar FileName */
+  char fileName[64];
+ 
+}
+
+/******************************************************************************/
+/*                                 Functions                                  */
+/******************************************************************************/
+void SetFileName()
+{
+  sysGetVariableString(sysvarString::LogFolderPath, logFilePath, elcount(logFilePath));
+  sysGetVariableString(sysvarString::FileName, fileName, elcount(fileName)); 
+  strncat(logFilePath,"\\",256);
+  strncat(logFilePath,fileName,256);
+  write(" LogFileName with flename is %s", logFilePath);
+  startLogging("Logging");
+  setLogFileName("Logging",logFilePath);
+}
+
+/******************************************************************************/
+/*                                  ON START                                  */
+/******************************************************************************/
+On Start
+{
+  SetFileName();
+}
+
+/******************************************************************************/
+/*                                  ON STOP                                   */
+/******************************************************************************/
+
+on preStop
+{
+ 
+}

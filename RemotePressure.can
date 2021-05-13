@@ -1,0 +1,477 @@
+/*@!Encoding:1252*/
+/* 
+*/
+/******************************************************************************/
+/*                                  GLOBALS                                   */
+/******************************************************************************/
+variables
+{
+  /****** TEST_MODE CONSTS********
+  * 1 - 
+  * 2 - 
+  * 3 - 
+  * 4 - 
+  * 5 - DC MODE
+  *********************************/
+  const int TEST_MODE = 5; 
+  
+  /* filePath to save the sysvar FileName */
+  char filePath[256];// = "C:\\Users\\f76448d\\Documents\\Tillage_SV\\_DevelopmentBranch\\GET_Remote\\tools\\tool\\Data";
+  char logFilePath[256];
+  /* fileName to save the sysvar FileName */
+  char fileName[64];// = "LogFile";
+  
+  /* Variables used to calculate Avg. Pump Pressure*/
+  int SUM_OF_PUMP_PRESSURE = 0;
+  int COUNT_OF_PUMP_PRESSURE = 0;
+  
+  /* Constant Timer for Pump Pressure commands */
+  const int TIMER_PP_DELAY = 1;
+  int FINAL_FLAG = 0;
+  
+  message CAN2.RemoteRequest ReqMsg;
+  message CAN2.RemoteMaintain MainMsg;
+  message CAN2.RemoteTerminateTx rTermMsg;
+  
+  message CAN2.RemoteTrgtCmdA TrgtsMsg;
+  message CAN2.RemoteTrgtCmdB PressTrgtsMsg;
+  
+  message CAN2.RemoteCurrCmdA DiskAngCurrTrgts;
+  message CAN2.RemoteCurrCmdB RearIndCurrTrgts;
+  message CAN2.RemoteCurrCmdC SoilMgrCurrTrgts;
+  message CAN2.RemoteCurrCmdD PumpPressCurrTrgts;
+  
+  message CAN2.RemoteDCCmdA DiskAngDCTrgts;
+  message CAN2.RemoteDCCmdB RearIndDCTrgts;
+  message CAN2.RemoteDCCmdC SoilMgrDCTrgts;
+  message CAN2.RemoteDCCmdD PumpPressDCTrgts;
+  
+  msTimer ApprLED;
+  msTimer DenyLED;
+  msTimer TermLED;
+  msTimer TxMaintain;
+  Timer PumpPressure;
+  timer StepBackDownPP;
+  
+  msTimer SendTrgts;
+  msTimer SendDCTrgts;
+  msTimer SendCurrTrgts;
+  
+  //msTimer PressureCmds; 
+}
+
+/******************************************************************************/
+/*                                 Functions                                  */
+/******************************************************************************/
+void SetFileName()
+{
+  
+  sysGetVariableString(sysvarString::LogFolderPath, logFilePath, elcount(filePath));
+  sysGetVariableString(sysvarString::FileName, fileName, elcount(fileName)); 
+  strncat(logFilePath,"\\",256);
+  strncat(logFilePath,fileName,256);
+  write(" LogFileName with flename is %s", logFilePath);
+  writeToLog("LOGGING STARTS");
+  writeToLogEx("LOGGING STARTS");
+  startLogging("PressureLog");
+  setLogFileName("PressureLog",logFilePath);
+}
+
+void Initialize()
+{
+  @sysvar::ActualDutyCycle = @sysvar::TrgtLimits::DutyCycle_Min;
+  @sysvar::SendRequest = 1;
+  @sysvar::SendMaintain = 1;
+  @sysvar::InSession = 1;
+}
+
+/******************************************************************************/
+/*                                  ON START                                  */
+/******************************************************************************/
+On Start
+{
+  switch(TEST_MODE){
+    case 5:
+      setTimerCyclic(SendDCTrgts, 10, 100);
+      break;
+      
+    default:
+      setTimerCyclic(SendTrgts, 10, 10);
+  }
+}
+
+/******************************************************************************/
+/*                                  ON STOP                                   */
+/******************************************************************************/
+
+on preStop
+{
+  @sysvar::SendTerminate = 1;
+  @sysvar::InSession = 0;
+  @sysvar::Logging = 0;
+  cancelTimer(PumpPressure);
+  cancelTimer(StepBackDownPP);
+  stopLogging("PressureLog");
+}
+
+On stopMeasurement
+{
+
+}
+
+/******************************************************************************/
+/*                               REMOTE COMMAND PANEL                         */
+/******************************************************************************/
+
+On sysvar SendRequest
+{
+  if (@this) {
+    ReqMsg.msgChannel = 2;
+    ReqMsg.byte(0) = 0;
+    ReqMsg.byte(1) = 0;
+    ReqMsg.byte(2) = 0;
+    ReqMsg.byte(3) = 0;
+    ReqMsg.byte(4) = 1;
+    ReqMsg.byte(5) = TEST_MODE;
+    output(ReqMsg);
+  }
+}
+
+on message CAN2::RemoteApprove
+{
+    @sysvar::RxApprove = 1;
+    setTimer(ApprLED, 200);
+    @sysvar::InSession = 1;
+
+    if(@SendMaintain){
+      setTimer(TxMaintain, 1000);
+    }
+}
+
+on timer ApprLED
+{
+  @sysvar::RxApprove = 0;
+} 
+
+on timer TxMaintain
+{
+  if(@sysvar::InSession){
+    MainMsg.msgChannel = 2;
+    MainMsg.CAN = 2;
+    MainMsg.byte(0) = 1;
+    MainMsg.byte(1) = TEST_MODE;
+    output(MainMsg);
+  }
+}
+
+On sysvar SendMaintain
+{
+  if (@this) {
+    if(@sysvar::InSession){
+      MainMsg.msgChannel = 2;
+      MainMsg.CAN = 2;
+      MainMsg.byte(0) = 1;
+      MainMsg.byte(1) = TEST_MODE;
+      output(MainMsg);      
+   }
+  }
+}
+
+On sysvar SendTerminate
+{
+  if (@this) {
+    rTermMsg.msgChannel = 2;
+    output(rTermMsg);
+  }
+}
+
+on message CAN2::RemoteDeny
+{
+  @sysvar::RxDeny = 1;
+  setTimer(DenyLED, 200);
+  @sysvar::InSession = 0;
+}
+
+on timer DenyLED
+{
+  @sysvar::RxDeny = 0;
+}
+
+on message CAN2::RemoteTerminateRx
+{
+  @sysvar::RxTerminate = 1;
+  setTimer(TermLED, 200);
+  @sysvar::InSession = 0;
+  if(@sysvar::Logging){
+    stopLogging("Logging");
+    @sysvar::SendTerminate = 1;
+    @sysvar::Logging = 0;  
+  } 
+}
+
+on timer TermLED
+{
+  @sysvar::RxTerminate = 0;
+}
+
+/******************************************************************************/
+/*                               PRESSURE COMMAND PANEL                       */
+/******************************************************************************/
+
+on timer PumpPressure
+{
+  if( @sysvar::ActualDutyCycle < @sysvar::TrgtLimits::DutyCycle_Max){    
+    @sysvar::ActualDutyCycle += @sysvar::DutyCycle_Inc;
+    if( @ActualDutyCycle + @DutyCycle_Inc > @TrgtLimits::DutyCycle_Max){
+      @sysvar::ActualDutyCycle = @sysvar::TrgtLimits::DutyCycle_Max;
+      FINAL_FLAG = 1;
+    }
+    write("%d",@sysvar::ActualDutyCycle);
+    //write("Running Status %d",delay.isRunning());
+    setTimer(PumpPressure,TIMER_PP_DELAY);
+  }
+  if ( @sysvar::ActualDutyCycle == @sysvar::TrgtLimits::DutyCycle_Max){
+    if( @sysvar::StepBackDown_Mode == 1){
+      FINAL_FLAG = 0;
+      write("STEP BACK DOWN MODE ON");
+      setTimer(StepBackDownPP,TIMER_PP_DELAY);
+      cancelTimer(PumpPressure);
+    }
+    else if(FINAL_FLAG){
+      setTimer(PumpPressure,TIMER_PP_DELAY);
+      FINAL_FLAG = 0;
+    }
+    else{
+      @sysvar::SendTerminate = 1;
+      @sysvar::InSession = 0;
+      @sysvar::Logging = 0;
+      stop();
+      write("Completed the TEST");
+    }
+  }
+}
+
+on timer StepBackDownPP
+{
+  if( @sysvar::ActualDutyCycle > @sysvar::TrgtLimits::DutyCycle_Min){
+    @sysvar::ActualDutyCycle -= @sysvar::DutyCycle_Inc;
+    if( @sysvar::ActualDutyCycle - @DutyCycle_Inc  < @sysvar::TrgtLimits::DutyCycle_Min){
+      @sysvar::ActualDutyCycle = @sysvar::TrgtLimits::DutyCycle_Min;
+      FINAL_FLAG = 1;
+    }
+    write("%d",@sysvar::ActualDutyCycle);
+    setTimer(StepBackDownPP,TIMER_PP_DELAY);
+  }
+  
+  if (@sysvar::ActualDutyCycle == @sysvar::TrgtLimits::DutyCycle_Min){
+    if(FINAL_FLAG){
+      setTimer(StepBackDownPP,TIMER_PP_DELAY);
+      FINAL_FLAG = 0;
+    }
+    else{
+      @sysvar::SendTerminate = 1;
+      @sysvar::InSession = 0;
+      @sysvar::Logging = 0;
+      cancelTimer(StepBackDownPP);
+      stop();
+      write("Completed the TEST with SBD Mode");
+    }
+  }
+}
+
+on message CAN2::Pump_Pressure
+{
+   int int16_pressure ;
+  
+   if(@InSession){
+     int16_pressure = (this.byte(6) << 8) + this.byte(7);
+     SUM_OF_PUMP_PRESSURE += int16_pressure;
+     COUNT_OF_PUMP_PRESSURE += 1;
+     @sysvar::PumpPressure_Avg = SUM_OF_PUMP_PRESSURE/COUNT_OF_PUMP_PRESSURE;
+   }
+}
+
+on sysvar Logging
+{
+ if (@sysvar::Logging == 1){
+   if (@sysvar::DutyCycle_Step == 0 | @sysvar::DutyCycle_Step == 1){
+     @sysvar::Logging = 0;
+     write("Error in Duty Cycle Step Size");
+   }
+   else{
+     Initialize();
+     if (@sysvar::InSession){
+       if (@sysvar::Pressure_Mode){
+         SetFileName();
+         write("Pump Pressure Mode");
+         @sysvar::DutyCycle_Inc = (@sysvar::TrgtLimits::DutyCycle_Max - @sysvar::TrgtLimits::DutyCycle_Min)/(@sysvar::DutyCycle_Step - 1);
+         write("%d",@sysvar::ActualDutyCycle);
+         setTimer(PumpPressure, TIMER_PP_DELAY);
+       }
+     }
+   }
+  }  
+  if (@sysvar::Logging == 0 & @sysvar::InSession == 1){
+    @sysvar::SendTerminate = 1;
+    @sysvar::InSession = 0;
+    @sysvar::Logging = 0;
+    stop();
+    write("STOPPED TEST ABRUPTLY");
+  }
+}
+
+on sysvar Pressure_Mode
+{
+  if (@sysvar::Pressure_Mode == 1)
+  {
+    @sysvar::PumpPressure_Flag = 1;
+    @sysvar::SoilMgrTrpPressure_Flag = 0;
+  }
+  if (@sysvar::Pressure_Mode == 0)
+  {
+    @sysvar::SoilMgrTrpPressure_Flag = 1;
+    @sysvar::PumpPressure_Flag = 0;
+  }
+}
+
+on timer SendTrgts
+{
+  int int16_FrontAngleTrgt, int16_RearAngleTrgt, int16_RearIndexTrgt; 
+  int int16_SoilMgrPosTrgt, int16_SoilMgrTripTrgt, int16_SoilMgrForceTrgt;
+  int int16_PumpPressureTrgt, int16_PumpPressDCTrgt;
+  /*
+     Check Targets with Target Limits
+     Target value is saturated at target limits
+  */
+  
+  if (@sysvar::FrontAngleTrgt > @sysvar::TrgtLimits::FrontAngleMax_deg) {
+    @sysvar::FrontAngleTrgt = @sysvar::TrgtLimits::FrontAngleMax_deg;
+  }
+  if (@sysvar::FrontAngleTrgt < @sysvar::TrgtLimits::FrontAngleMin_deg) {
+    @sysvar::FrontAngleTrgt = @sysvar::TrgtLimits::FrontAngleMin_deg;
+  }
+  if (@sysvar::RearAngleTrgt > @sysvar::TrgtLimits::RearAngleMax_deg) {
+    @sysvar::RearAngleTrgt = @sysvar::TrgtLimits::RearAngleMax_deg;
+  }
+  if (@sysvar::RearAngleTrgt < @sysvar::TrgtLimits::RearAngleMin_deg) {
+    @sysvar::RearAngleTrgt = @sysvar::TrgtLimits::RearAngleMin_deg;
+  }
+  if (@sysvar::RearIndexTrgt > @sysvar::TrgtLimits::RearIndexMax_mm) {
+    @sysvar::RearIndexTrgt = @sysvar::TrgtLimits::RearIndexMax_mm;
+  }
+  if (@sysvar::RearIndexTrgt < @sysvar::TrgtLimits::RearIndexMin_mm) {
+    @sysvar::RearIndexTrgt = @sysvar::TrgtLimits::RearIndexMin_mm;
+  }
+  if (@sysvar::SoilMgrPosTrgt > @sysvar::TrgtLimits::SoilMgrPosMax_mm) {
+    @sysvar::SoilMgrPosTrgt = @sysvar::TrgtLimits::SoilMgrPosMax_mm;
+  }
+  if (@sysvar::SoilMgrPosTrgt < @sysvar::TrgtLimits::SoilMgrPosMin_mm) {
+    @sysvar::SoilMgrPosTrgt = @sysvar::TrgtLimits::SoilMgrPosMin_mm;
+  }
+  if (@sysvar::SoilMgrTripTrgt > @sysvar::TrgtLimits::SoilMgrTripMax_mm) {
+    @sysvar::SoilMgrTripTrgt = @sysvar::TrgtLimits::SoilMgrTripMax_mm;
+  }
+  if (@sysvar::SoilMgrTripTrgt < @sysvar::TrgtLimits::SoilMgrTripMin_mm) {
+    @sysvar::SoilMgrTripTrgt = @sysvar::TrgtLimits::SoilMgrTripMin_mm;
+  }
+  if (@sysvar::PumpPressureTrgt > @sysvar::TrgtLimits::PumpPressureMax_kPa) {
+        @sysvar::PumpPressureTrgt = @sysvar::TrgtLimits::PumpPressureMax_kPa;
+  }
+  if (@sysvar::PumpPressureTrgt < @sysvar::TrgtLimits::PumpPressureMin_kPa) {
+        @sysvar::PumpPressureTrgt = @sysvar::TrgtLimits::PumpPressureMin_kPa;
+  }
+  
+  /************ Remote Target Commands **************/
+  int16_FrontAngleTrgt = (int)(@sysvar::FrontAngleTrgt * 10);
+  int16_RearAngleTrgt = (int)(@sysvar::RearAngleTrgt * 10);
+  int16_RearIndexTrgt = (int)(@sysvar::RearIndexTrgt * 10);
+  int16_SoilMgrPosTrgt = (int)(@sysvar::SoilMgrPosTrgt * 10);
+  int16_SoilMgrTripTrgt = (int)(@sysvar::SoilMgrTripTrgt * 10);
+  //int16_SoilMgrForceTrgt = (int)(@sysvar::SoilMgrForceTrgt);
+  int16_PumpPressureTrgt = (int)(@sysvar::PumpPressureTrgt);
+  
+  
+  if(@sysvar::InSession){
+    TrgtsMsg.msgChannel = 2;
+    TrgtsMsg.byte(0) = int16_FrontAngleTrgt >> 8;
+    TrgtsMsg.byte(1) = int16_FrontAngleTrgt;
+    TrgtsMsg.byte(2) = int16_RearAngleTrgt >> 8;
+    TrgtsMsg.byte(3) = int16_RearAngleTrgt;
+    TrgtsMsg.byte(4) = int16_RearIndexTrgt >> 8;
+    TrgtsMsg.byte(5) = int16_RearIndexTrgt;
+    TrgtsMsg.byte(6) = int16_SoilMgrPosTrgt >> 8;
+    TrgtsMsg.byte(7) = int16_SoilMgrPosTrgt;
+    output(TrgtsMsg);
+    
+    PressTrgtsMsg.msgChannel = 2;
+    PressTrgtsMsg.byte(0) = 0xFF;
+    PressTrgtsMsg.byte(1) = 0xFF;
+    PressTrgtsMsg.byte(2) = 0xFF;
+    PressTrgtsMsg.byte(3) = 0xFF;
+    PressTrgtsMsg.byte(4) = 0xFF;
+    PressTrgtsMsg.byte(5) = int16_PumpPressureTrgt >> 8 ;
+    PressTrgtsMsg.byte(6) = int16_PumpPressureTrgt;
+    PressTrgtsMsg.byte(7) = 0xFF;
+    output(PressTrgtsMsg);
+  }
+}
+
+on timer SendDCTrgts
+{ 
+  /************ Remote DC Commands **************/
+  int int16_PumpPressDCTrgt;
+
+  int16_PumpPressDCTrgt = (int)(@sysvar::ActualDutyCycle * 10);
+  
+  if(@sysvar::InSession){
+    
+    DiskAngDCTrgts.msgChannel = 2;
+    DiskAngDCTrgts.byte(0) = 0x00;
+    DiskAngDCTrgts.byte(1) = 0x00;
+    DiskAngDCTrgts.byte(2) = 0x00;
+    DiskAngDCTrgts.byte(3) = 0x00;
+    DiskAngDCTrgts.byte(4) = 0x00;
+    DiskAngDCTrgts.byte(5) = 0x00;
+    DiskAngDCTrgts.byte(6) = 0x00;
+    DiskAngDCTrgts.byte(7) = 0x00;
+    output(DiskAngDCTrgts);
+    
+    RearIndDCTrgts.msgChannel = 2;
+    RearIndDCTrgts.byte(0) = 0x00;
+    RearIndDCTrgts.byte(1) = 0x00;
+    RearIndDCTrgts.byte(2) = 0x00;
+    RearIndDCTrgts.byte(3) = 0x00;
+    RearIndDCTrgts.byte(4) = 0x00;
+    RearIndDCTrgts.byte(5) = 0x00;
+    RearIndDCTrgts.byte(6) = 0x00;
+    RearIndDCTrgts.byte(7) = 0x00;
+    output(RearIndDCTrgts);
+    
+    SoilMgrDCTrgts.msgChannel = 2;
+    SoilMgrDCTrgts.byte(0) = 0x00;
+    SoilMgrDCTrgts.byte(1) = 0x00;
+    SoilMgrDCTrgts.byte(2) = 0x00;
+    SoilMgrDCTrgts.byte(3) = 0x00;
+    SoilMgrDCTrgts.byte(4) = 0x00;
+    SoilMgrDCTrgts.byte(5) = 0x00;
+    SoilMgrDCTrgts.byte(6) = 0x00;
+    SoilMgrDCTrgts.byte(7) = 0x00;
+    output(SoilMgrDCTrgts);
+    
+    PumpPressDCTrgts.msgChannel = 2;
+    PumpPressDCTrgts.byte(0) = 0x00;
+    PumpPressDCTrgts.byte(1) = 0x00;
+    PumpPressDCTrgts.byte(2) = 0x00;
+    PumpPressDCTrgts.byte(3) = 0x00;
+    PumpPressDCTrgts.byte(4) = int16_PumpPressDCTrgt >> 8;
+    PumpPressDCTrgts.byte(5) = int16_PumpPressDCTrgt;
+    output(PumpPressDCTrgts);
+  }
+}
+
+on timer SendCurrTrgts
+{
+  
+  
+  
+}
