@@ -1,0 +1,56 @@
+/*@!Encoding:1252*/
+/*****************************************************************************
+* Declaring different types of Timers
+*****************************************************************************/
+
+
+/******************************************************************************/
+/*                                  GLOBALS                                   */
+/******************************************************************************/
+variables
+{
+  msTimer Timer1_ms;
+  Timer Timer2_S;
+  msTimer CyclicTimer_ms;
+}
+
+/******************************************************************************/
+/*                                 Functions                                  */
+/******************************************************************************/
+
+
+/******************************************************************************/
+/*                                  ON START                                  */
+/******************************************************************************/
+On Start
+{
+  setTimerCyclic(CyclicTimer_ms, 10, 10);
+  setTimer(Timer1_ms, 100);
+  setTimer(Timer2_S, 5);
+  
+}
+
+/******************************************************************************/
+/*                                  ON STOP                                   */
+/******************************************************************************/
+
+on preStop
+{
+  
+}
+
+on timer CyclicTimer_ms
+{
+  // Statements that happen at every 10 milli seconds start after 10 milli seconds from the start of measurements
+}
+
+on timer Timer1_ms
+{
+  // Statements that happen when called, exits the block after 100 milli seconds from the instance the timer is called
+}
+
+on timer Timer2_S
+{
+  // Statements that happen when called, exits the block after 5 seconds from the instance the timer is called
+}
+
